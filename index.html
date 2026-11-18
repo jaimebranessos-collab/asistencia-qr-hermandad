@@ -1,100 +1,296 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Escáner QR - Hermandad</title>
-  <script src="https://unpkg.com/html5-qrcode"></script>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f1f3f5;
-      padding: 20px;
-      text-align: center;
-    }
-    .panel {
-      background: white;
-      max-width: 450px;
-      margin: auto;
-      padding: 20px;
-      border-radius: 15px;
-    }
-    button {
-      background: #16834a;
-      color: white;
-      border: 0;
-      padding: 15px;
-      width: 100%;
-      border-radius: 8px;
-      font-size: 16px;
-      margin: 8px 0;
-    }
-    #reader { width: 100%; margin-top: 15px; }
-    #resultado { padding: 15px; background: #eee; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asistencia QR - Hermandad</title>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f1f3f5;
+  margin: 0;
+  padding: 20px;
+  text-align: center;
+}
+.panel {
+  background: white;
+  max-width: 480px;
+  margin: auto;
+  padding: 22px;
+  border-radius: 15px;
+  box-shadow: 0 3px 12px #0002;
+}
+h2 { color: #16834a; }
+input, select, button {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px;
+  margin: 8px 0;
+  font-size: 16px;
+  border-radius: 8px;
+}
+input, select { border: 1px solid #bbb; }
+button {
+  border: none;
+  background: #16834a;
+  color: white;
+  font-weight: bold;
+}
+button:disabled {
+  background: #999;
+}
+#reader {
+  width: 100%;
+  margin-top: 15px;
+}
+#resultado {
+  margin-top: 15px;
+  padding: 12px;
+  border-radius: 8px;
+  font-weight: bold;
+  white-space: pre-wrap;
+}
+.ok { background: #d8f5df; color: #12632a; }
+.error { background: #ffe0e0; color: #a00000; }
+.info { background: #e2efff; color: #164b80; }
+</style>
 </head>
+
 <body>
-  <div class="panel">
-    <h2>CONTROL DE ASISTENCIA QR</h2>
-    <p>HERMANDAD - SECRETARÍA DE ORGANIZACIÓN</p>
+<div class="panel">
 
-    <button onclick="iniciar()">ACTIVAR CÁMARA</button>
-    <button onclick="detener()">DETENER CÁMARA</button>
+<h2>HERMANDAD</h2>
+<h3>Sistema de Asistencia QR</h3>
+<p>Secretaría de Organización</p>
 
-    <div id="reader"></div>
-    <p id="resultado">Esperando cámara...</p>
-  </div>
+<label for="pin"><b>PIN del secretario</b></label>
+<input id="pin" type="password"
+placeholder="Ingresa tu PIN" inputmode="numeric"
+autocomplete="off">
 
-  <script>
-    let lector = null;
+<button id="cargar" onclick="cargarActividades()">
+Ingresar y cargar actividades
+</button>
 
-    async function iniciar() {
-      const resultado = document.getElementById("resultado");
+<label for="actividad"><b>Seleccionar actividad</b></label>
+<select id="actividad" disabled>
+<option value="">Primero ingresa tu PIN</option>
+</select>
 
-      try {
-        if (!window.isSecureContext) {
-          throw new Error("La página no utiliza HTTPS seguro.");
-        }
+<button id="iniciar" onclick="iniciarEscaner()" disabled>
+Activar cámara y escanear QR
+</button>
 
-        if (!navigator.mediaDevices ||
-            !navigator.mediaDevices.getUserMedia) {
-          throw new Error("El navegador no permite acceder a la cámara.");
-        }
+<button id="detener" onclick="detenerEscaner()" disabled
+style="background:#a52a2a">
+Detener cámara
+</button>
 
-        if (typeof Html5Qrcode === "undefined") {
-          throw new Error("No se pudo cargar el lector QR.");
-        }
+<div id="reader"></div>
+<div id="resultado" class="info">
+Esperando inicio de sesión.
+</div>
 
-        if (lector) {
-          await lector.stop().catch(() => {});
-          lector.clear();
-        }
+</div>
 
-        lector = new Html5Qrcode("reader");
+<script>
+const API_URL =
+"https://script.google.com/macros/s/AKfycbzTNvFAklJvZrAEPcLsaZZM2E2z_nWhADwbfoATlmS7BBNKhBlThSAz9K4zQSnChX-hRw/exec";
 
-        await lector.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: 230 },
-          (texto) => {
-            resultado.textContent = "QR leído: " + texto;
-          }
-        );
+let pinSesion = "";
+let scanner = null;
+let procesando = false;
 
-        resultado.textContent = "¡Cámara activada correctamente!";
-      } catch (error) {
-        resultado.textContent =
-          "ERROR: " + (error.message || String(error));
-      }
+function mostrar(mensaje, tipo) {
+  const caja = document.getElementById("resultado");
+  caja.textContent = mensaje;
+  caja.className = tipo;
+}
+
+function llamarAPI(parametros) {
+  return new Promise((resolve, reject) => {
+    const callback = "respuestaQR_" +
+      Date.now() + "_" + Math.floor(Math.random() * 1000000);
+
+    const url = new URL(API_URL);
+    Object.entries(parametros).forEach(([clave, valor]) => {
+      url.searchParams.set(clave, valor);
+    });
+    url.searchParams.set("callback", callback);
+
+    const script = document.createElement("script");
+    let terminado = false;
+
+    const limpiar = () => {
+      delete window[callback];
+      script.remove();
+    };
+
+    const temporizador = setTimeout(() => {
+      if (terminado) return;
+      terminado = true;
+      limpiar();
+      reject(new Error("Tiempo de espera agotado. Intenta nuevamente."));
+    }, 20000);
+
+    window[callback] = (respuesta) => {
+      if (terminado) return;
+      terminado = true;
+      clearTimeout(temporizador);
+      limpiar();
+      resolve(respuesta);
+    };
+
+    script.onerror = () => {
+      if (terminado) return;
+      terminado = true;
+      clearTimeout(temporizador);
+      limpiar();
+      reject(new Error("No se pudo conectar con Google Apps Script."));
+    };
+
+    script.src = url.toString();
+    document.body.appendChild(script);
+  });
+}
+
+async function cargarActividades() {
+  const pin = document.getElementById("pin").value.trim();
+
+  if (!pin) {
+    mostrar("Ingresa tu PIN.", "error");
+    return;
+  }
+
+  const boton = document.getElementById("cargar");
+  boton.disabled = true;
+  mostrar("Conectando con Google Sheets...", "info");
+
+  try {
+    const respuesta = await llamarAPI({
+      accion: "actividades",
+      pin: pin
+    });
+
+    if (!respuesta.ok) {
+      throw new Error(respuesta.mensaje || "No se pudo ingresar.");
     }
 
-    async function detener() {
-      if (lector && lector.isScanning) {
-        await lector.stop();
-        lector.clear();
-      }
-      document.getElementById("resultado").textContent =
-        "Cámara detenida.";
+    pinSesion = pin;
+
+    const selector = document.getElementById("actividad");
+    selector.innerHTML = "";
+
+    if (!respuesta.actividades.length) {
+      selector.innerHTML =
+        '<option value="">No hay actividades activas</option>';
+      mostrar("No hay actividades disponibles.", "error");
+      return;
     }
-  </script>
+
+    respuesta.actividades.forEach(a => {
+      const opcion = document.createElement("option");
+      opcion.value = a.id;
+      opcion.textContent = a.nombre;
+      selector.appendChild(opcion);
+    });
+
+    selector.disabled = false;
+    document.getElementById("iniciar").disabled = false;
+
+    mostrar("Acceso correcto. Actividades cargadas.", "ok");
+
+  } catch (error) {
+    pinSesion = "";
+    mostrar(error.message, "error");
+  } finally {
+    boton.disabled = false;
+  }
+}
+
+async function iniciarEscaner() {
+  if (!pinSesion) {
+    mostrar("Primero ingresa con tu PIN.", "error");
+    return;
+  }
+
+  if (!document.getElementById("actividad").value) {
+    mostrar("Selecciona una actividad.", "error");
+    return;
+  }
+
+  try {
+    if (!scanner) {
+      scanner = new Html5Qrcode("reader");
+    }
+
+    document.getElementById("iniciar").disabled = true;
+    document.getElementById("detener").disabled = false;
+
+    await scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      registrarQR,
+      () => {}
+    );
+
+    mostrar("Cámara activa. Acerca el QR del integrante.", "info");
+
+  } catch (error) {
+    document.getElementById("iniciar").disabled = false;
+    document.getElementById("detener").disabled = true;
+    mostrar("No se pudo iniciar la cámara: " + error, "error");
+  }
+}
+
+async function registrarQR(token) {
+  if (procesando) return;
+
+  procesando = true;
+  mostrar("QR leído. Registrando asistencia...", "info");
+
+  try {
+    const respuesta = await llamarAPI({
+      accion: "registrar",
+      pin: pinSesion,
+      token: token,
+      actividadId: document.getElementById("actividad").value
+    });
+
+    if (respuesta.ok) {
+      mostrar(
+        "✓ " + respuesta.mensaje +
+        "\nIntegrante: " + respuesta.nombre +
+        "\nCuadrilla: " + respuesta.cuadrilla +
+        "\nEstado: " + respuesta.condicion +
+        "\nHora: " + respuesta.hora,
+        "ok"
+      );
+    } else {
+      mostrar("No registrado: " + respuesta.mensaje, "error");
+    }
+
+  } catch (error) {
+    mostrar("Error: " + error.message, "error");
+  } finally {
+    setTimeout(() => {
+      procesando = false;
+    }, 2000);
+  }
+}
+
+async function detenerEscaner() {
+  if (scanner && scanner.isScanning) {
+    await scanner.stop();
+  }
+
+  document.getElementById("iniciar").disabled = false;
+  document.getElementById("detener").disabled = true;
+  mostrar("Cámara detenida.", "info");
+}
+</script>
 </body>
 </html>
